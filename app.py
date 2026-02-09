@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import cv2
 import numpy as np
 import os
-import gc # Import Garbage Collector para maglinis ng RAM
+import gc
 
 # Suppress TensorFlow logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -12,52 +12,62 @@ from deepface import DeepFace
 app = Flask(__name__)
 
 def process_image(file_stream):
-    # Convert uploaded file to numpy array directly
+    # 1. Read Image from Request
     file_bytes = np.asarray(bytearray(file_stream.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    
+    # 2. RESIZE IMAGE (CRITICAL STEP FOR FREE TIER)
+    # Phone images are too big (4000px+). We resize to max 600px width.
+    # This reduces RAM usage from ~100MB to ~5MB per image.
+    height, width = img.shape[:2]
+    max_width = 600
+    
+    if width > max_width:
+        scaling_factor = max_width / float(width)
+        new_height = int(height * scaling_factor)
+        img = cv2.resize(img, (max_width, new_height), interpolation=cv2.INTER_AREA)
+    
     return img
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Face Verification API (ArcFace Lite) is Running!"
+    return "Face Verification API (Optimized ArcFace) is Running!"
 
 @app.route('/verify', methods=['POST'])
 def verify():
     try:
-        # Force Clean Memory bago mag-start
+        # Clean memory before starting
         gc.collect()
 
         if 'id_image' not in request.files or 'selfie_image' not in request.files:
             return jsonify({"error": "Missing images"}), 400
 
-        # 1. Load Images
+        # Load and Resize Images
         id_img = process_image(request.files['id_image'])
         selfie_img = process_image(request.files['selfie_image'])
 
-        # 2. DeepFace Verify using ARCFACE
-        # ArcFace is minimal (~23MB weights) and fits in 512MB RAM
+        # DeepFace Verify using ARCFACE
         result = DeepFace.verify(
             img1_path = id_img,
             img2_path = selfie_img,
-            model_name = "ArcFace",  # <--- PINALITAN NATIN NITO
+            model_name = "ArcFace",
             detector_backend = "opencv",
             enforce_detection = False, 
             align = True
         )
 
-        # 3. Process Result
+        # Process Result
         is_match = result['verified']
         distance = result['distance']
         
-        # ArcFace Threshold is distinct. Usually around 0.68
-        # We adjust the confidence calculation for ArcFace
+        # ArcFace Confidence Calculation
         confidence = 0
         if is_match:
             confidence = max(0, min(100, (1 - distance) * 100 + 30)) 
         else:
             confidence = max(0, (1 - distance) * 100)
 
-        # Clean up memory after verify
+        # Force Memory Cleanup
         del id_img
         del selfie_img
         del result
