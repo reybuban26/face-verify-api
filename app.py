@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import os
 
-# Suppress TensorFlow logs to keep logs clean
+# Suppress TensorFlow logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 from deepface import DeepFace
@@ -18,7 +18,7 @@ def process_image(file_stream):
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Face Verification API (DeepFace) is Running!"
+    return "Face Verification API (Lite Version) is Running!"
 
 @app.route('/verify', methods=['POST'])
 def verify():
@@ -26,16 +26,17 @@ def verify():
         if 'id_image' not in request.files or 'selfie_image' not in request.files:
             return jsonify({"error": "Missing images"}), 400
 
-        # 1. Load Images from memory
+        # 1. Load Images
         id_img = process_image(request.files['id_image'])
         selfie_img = process_image(request.files['selfie_image'])
 
         # 2. DeepFace Verify
-        # Gamit ang "VGG-Face" model at "opencv" detector (magaan at mabilis)
+        # CHANGE: Ginamit natin ang "Facenet" dahil mas magaan ito sa RAM (90MB vs 580MB)
+        # Ito ang solusyon sa 502 Crash sa Free Tier servers.
         result = DeepFace.verify(
             img1_path = id_img,
             img2_path = selfie_img,
-            model_name = "VGG-Face",
+            model_name = "Facenet",  # <--- DITO TAYO NAGPALIT
             detector_backend = "opencv",
             enforce_detection = False, 
             align = True
@@ -45,8 +46,8 @@ def verify():
         is_match = result['verified']
         distance = result['distance']
         
-        # Convert distance to confidence score (Estimate)
-        # VGG-Face threshold is usually around 0.40
+        # Facenet Threshold is usually around 0.40
+        # Lower distance = Better match
         confidence = 0
         if is_match:
             confidence = max(0, min(100, (1 - distance) * 100 + 20)) 
@@ -60,7 +61,10 @@ def verify():
         })
 
     except Exception as e:
+        # Print error to logs for debugging
+        print(f"Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
+    # Fix port binding
     app.run(host='0.0.0.0', port=10000)
