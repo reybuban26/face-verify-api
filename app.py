@@ -1,20 +1,24 @@
 from flask import Flask, request, jsonify
-import face_recognition
 import cv2
 import numpy as np
+import os
+
+# Suppress TensorFlow logs to keep logs clean
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+from deepface import DeepFace
 
 app = Flask(__name__)
 
 def process_image(file_stream):
-    # Convert uploaded file to numpy array directly (no saving to disk needed)
+    # Convert uploaded file to numpy array directly
     file_bytes = np.asarray(bytearray(file_stream.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    return rgb_img
+    return img
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Face Verification API is Running!"
+    return "Face Verification API (DeepFace) is Running!"
 
 @app.route('/verify', methods=['POST'])
 def verify():
@@ -22,39 +26,36 @@ def verify():
         if 'id_image' not in request.files or 'selfie_image' not in request.files:
             return jsonify({"error": "Missing images"}), 400
 
-        # 1. Load Images directly from memory
+        # 1. Load Images from memory
         id_img = process_image(request.files['id_image'])
         selfie_img = process_image(request.files['selfie_image'])
 
-        # 2. Find Faces (Upsampling for better detection)
-        try:
-            id_encodings = face_recognition.face_encodings(id_img)
-            if not id_encodings:
-                return jsonify({"match": False, "confidence": 0, "error": "No face in ID"}), 200
-            id_encode = id_encodings[0]
-        except Exception as e:
-            return jsonify({"error": f"ID Processing Error: {str(e)}"}), 500
+        # 2. DeepFace Verify
+        # Gamit ang "VGG-Face" model at "opencv" detector (magaan at mabilis)
+        result = DeepFace.verify(
+            img1_path = id_img,
+            img2_path = selfie_img,
+            model_name = "VGG-Face",
+            detector_backend = "opencv",
+            enforce_detection = False, 
+            align = True
+        )
 
-        try:
-            selfie_encodings = face_recognition.face_encodings(selfie_img)
-            if not selfie_encodings:
-                return jsonify({"match": False, "confidence": 0, "error": "No face in Selfie"}), 200
-            selfie_encode = selfie_encodings[0]
-        except Exception as e:
-            return jsonify({"error": f"Selfie Processing Error: {str(e)}"}), 500
-
-        # 3. Compare
-        # Tolerance: 0.5 (Strict), 0.6 (Standard). Lower is stricter.
-        match_result = face_recognition.compare_faces([id_encode], selfie_encode, tolerance=0.5)
-        face_distance = face_recognition.face_distance([id_encode], selfie_encode)[0]
+        # 3. Process Result
+        is_match = result['verified']
+        distance = result['distance']
         
-        # Convert distance to confidence score (0 to 100)
-        score = round((1 - face_distance) * 100, 2)
-        is_match = bool(match_result[0])
+        # Convert distance to confidence score (Estimate)
+        # VGG-Face threshold is usually around 0.40
+        confidence = 0
+        if is_match:
+            confidence = max(0, min(100, (1 - distance) * 100 + 20)) 
+        else:
+            confidence = max(0, (1 - distance) * 100)
 
         return jsonify({
-            "match": is_match,
-            "confidence": score,
+            "match": bool(is_match),
+            "confidence": round(confidence, 2),
             "status": "success"
         })
 

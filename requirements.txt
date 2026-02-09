@@ -1,5 +1,6 @@
 Flask
 gunicorn
-face_recognition
+deepface
+tf-keras
 opencv-python-headless
 numpy
